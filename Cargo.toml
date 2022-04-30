@@ -1,5 +1,5 @@
 [package]
-name = "traderust"
+name = "apsp_mt"
 version = "0.1.0"
 edition = "2018"
 

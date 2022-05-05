@@ -95,15 +95,12 @@ fn dijkstra_one_row(
     let mut pred_row = vec![NO_PRED_NODE; size];
 
     let mut heap = BinaryHeap::new();
-    let mut set = HashSet::new();
 
     dist_row[start as usize] = 0.0;
     heap.push(Reverse((0, start)));
-    set.insert(start);
 
     while !heap.is_empty() {
         if let Some(Reverse((priority, u))) = heap.pop() {
-            set.remove(&u);
             if priority == dist_row[u as usize] as u64 {
                 if let Some(neighbors) = neighbors_map.get(&u) {
                     for v in neighbors {
@@ -114,7 +111,6 @@ fn dijkstra_one_row(
                                 pred_row[*v as usize] = u as i64;
                                 let tup = (alt, *v);
                                 heap.push(Reverse(tup));
-                                set.insert(*v);
                             }
                         } else {
                             panic!("bug: neighbor not in weights");

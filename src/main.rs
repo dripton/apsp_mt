@@ -5,7 +5,7 @@ use std::fs;
 use std::path;
 
 use clap::{ArgEnum, Parser};
-// use rayon::prelude::*;
+use rayon::prelude::*;
 
 #[macro_use]
 extern crate serde_derive;
@@ -193,19 +193,15 @@ fn dijkstra(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
         }
     }
 
-    // Do the Dijkstra algorithm for each row
-    for i in 0..size {
-        let (dist_row, pred_row) = dijkstra_one_row(i as u64, size, &neighbors_map, &weights);
-        dist[i] = dist_row;
-        pred[i] = pred_row
+    // Do the Dijkstra algorithm for each row, in parallel using Rayon
+    let tuples: Vec<(Vec<f64>, Vec<i64>)> = (0..size)
+        .into_par_iter()
+        .map(|i| dijkstra_one_row(i as u64, size, &neighbors_map, &weights))
+        .collect();
+    for (i, (dist_row, pred_row)) in tuples.iter().enumerate() {
+        dist[i] = dist_row.to_vec();
+        pred[i] = pred_row.to_vec();
     }
-
-    // TODO Parallelize this
-    /*
-    (0..size).into_par_iter().
-              map(|i| dijkstra_one_row(i as u64, size, &neighbors_map, &weights)).collect();
-    */
-
 
     return pred;
 }

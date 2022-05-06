@@ -15,6 +15,7 @@ use ndarray_npy::{read_npy, NpzWriter};
 const NO_PRED_NODE: i64 = -9999;
 const INFINITY: f64 = f64::MAX;
 
+// TODO multi-thread
 fn floyd_warshall(dist: &mut Array2<f64>) -> Array2<i64> {
     let size = dist.nrows();
     let mut pred = Array2::<i64>::from_elem((size, size), NO_PRED_NODE);
@@ -77,6 +78,7 @@ fn dijkstra_one_row(
     let mut dist_row = vec![INFINITY; size];
     let mut pred_row = vec![NO_PRED_NODE; size];
 
+    // TODO Try a Fibonacci heap instead
     let mut heap = BinaryHeap::new();
 
     dist_row[start as usize] = 0.0;

@@ -1,60 +1,43 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::fs;
+use std::fs::File;
 use std::path;
 
+use anyhow::Result;
 use clap::{ArgEnum, Parser};
 use rayon::prelude::*;
 
-#[macro_use]
-extern crate serde_derive;
-use serde_json::{self, Result};
+extern crate ndarray;
+use ndarray::prelude::*;
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(transparent)]
-pub struct Row {
-    pub cells: Vec<f64>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(transparent)]
-pub struct Table {
-    pub rows: Vec<Row>,
-}
-
-impl Table {
-    pub fn new(data: &str) -> Result<Table> {
-        let table = serde_json::from_str(data);
-        table
-    }
-}
+use ndarray_npy::{read_npy, NpzWriter};
 
 const NO_PRED_NODE: i64 = -9999;
 const INFINITY: f64 = f64::MAX;
 
-fn floyd_warshall(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
-    let size = dist.len();
-    let mut pred = vec![vec![NO_PRED_NODE; size]; size];
+fn floyd_warshall(dist: &mut Array2<f64>) -> Array2<i64> {
+    let size = dist.nrows();
+    let mut pred = Array2::<i64>::from_elem((size, size), NO_PRED_NODE);
 
     // Set all zero vertexes to infinity
     for i in 0..size {
         for j in 0..size {
-            if dist[i][j] == 0.0 {
-                dist[i][j] = INFINITY;
+            if dist[[i, j]] == 0.0 {
+                dist[[i, j]] = INFINITY;
             }
         }
     }
 
     // Set each vertex at zero distance to itself
     for i in 0..size {
-        dist[i][i] = 0.0;
+        dist[[i, i]] = 0.0;
     }
 
     // Assume bidirectional movement
     for i in 0..size {
         for j in 0..size {
-            if dist[i][j] > dist[j][i] {
-                dist[i][j] = dist[j][i];
+            if dist[[i, j]] > dist[[j, i]] {
+                dist[[i, j]] = dist[[j, i]];
             }
         }
     }
@@ -62,8 +45,8 @@ fn floyd_warshall(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
     // Initialize predecessors where we have paths
     for i in 0..size {
         for j in 0..size {
-            if dist[i][j] > 0.0 && dist[i][j] < INFINITY {
-                pred[i][j] = i as i64;
+            if dist[[i, j]] > 0.0 && dist[[i, j]] < INFINITY {
+                pred[[i, j]] = i as i64;
             }
         }
     }
@@ -72,12 +55,12 @@ fn floyd_warshall(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
     for k in 0..size {
         for i in 0..size {
             for j in 0..size {
-                if dist[i][k] != INFINITY
-                    && dist[k][j] != INFINITY
-                    && dist[i][j] > dist[i][k] + dist[k][j]
+                if dist[[i, k]] != INFINITY
+                    && dist[[k, j]] != INFINITY
+                    && dist[[i, j]] > dist[[i, k]] + dist[[k, j]]
                 {
-                    dist[i][j] = dist[i][k] + dist[k][j];
-                    pred[i][j] = pred[k][j];
+                    dist[[i, j]] = dist[[i, k]] + dist[[k, j]];
+                    pred[[i, j]] = pred[[k, j]];
                 }
             }
         }
@@ -124,29 +107,29 @@ fn dijkstra_one_row(
     return (dist_row, pred_row);
 }
 
-fn dijkstra(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
-    let size = dist.len();
-    let mut pred = vec![vec![NO_PRED_NODE; size]; size];
+fn dijkstra(dist: &mut Array2<f64>) -> Array2<i64> {
+    let size = dist.nrows();
+    let mut pred = Array2::<i64>::from_elem((size, size), NO_PRED_NODE);
 
     // Set all zero vertexes to infinity
     for i in 0..size {
         for j in 0..size {
-            if dist[i][j] == 0.0 {
-                dist[i][j] = INFINITY;
+            if dist[[i, j]] == 0.0 {
+                dist[[i, j]] = INFINITY;
             }
         }
     }
 
     // Set each vertex at zero distance to itself
     for i in 0..size {
-        dist[i][i] = 0.0;
+        dist[[i, i]] = 0.0;
     }
 
     // Assume bidirectional movement
     for i in 0..size {
         for j in 0..size {
-            if dist[i][j] > dist[j][i] {
-                dist[i][j] = dist[j][i];
+            if dist[[i, j]] > dist[[j, i]] {
+                dist[[i, j]] = dist[[j, i]];
             }
         }
     }
@@ -159,7 +142,7 @@ fn dijkstra(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
     }
     for i in 0..size {
         for j in 0..size {
-            if dist[i][j] > 0.0 && dist[i][j] < INFINITY {
+            if dist[[i, j]] > 0.0 && dist[[i, j]] < INFINITY {
                 if let Some(set) = neighbors_map.get_mut(&(i as u64)) {
                     set.insert(j as u64);
                 } else {
@@ -173,8 +156,8 @@ fn dijkstra(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
     let mut weights: HashMap<(u64, u64), u64> = HashMap::new();
     for i in 0..size {
         for j in 0..size {
-            if dist[i][j] > 0.0 && dist[i][j] != INFINITY {
-                weights.insert((i as u64, j as u64), dist[i][j] as u64);
+            if dist[[i, j]] > 0.0 && dist[[i, j]] != INFINITY {
+                weights.insert((i as u64, j as u64), dist[[i, j]] as u64);
             }
         }
     }
@@ -182,8 +165,8 @@ fn dijkstra(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
     // Initialize predecessors where we have paths
     for i in 0..size {
         for j in 0..size {
-            if dist[i][j] > 0.0 && dist[i][j] < INFINITY {
-                pred[i][j] = i as i64;
+            if dist[[i, j]] > 0.0 && dist[[i, j]] < INFINITY {
+                pred[[i, j]] = i as i64;
             }
         }
     }
@@ -194,8 +177,13 @@ fn dijkstra(dist: &mut Vec<Vec<f64>>) -> Vec<Vec<i64>> {
         .map(|i| dijkstra_one_row(i as u64, size, &neighbors_map, &weights))
         .collect();
     for (i, (dist_row, pred_row)) in tuples.iter().enumerate() {
-        dist[i] = dist_row.to_vec();
-        pred[i] = pred_row.to_vec();
+        // TODO Find a way to copy the entire row
+        for (j, dist_el) in dist_row.iter().enumerate() {
+            dist[[i, j]] = *dist_el;
+        }
+        for (j, pred_el) in pred_row.iter().enumerate() {
+            pred[[i, j]] = *pred_el;
+        }
     }
 
     return pred;
@@ -207,17 +195,13 @@ struct Args {
     #[clap(short, long, arg_enum)]
     algorithm: Algorithm,
 
-    /// Path to the input matrix in json format
+    /// Path to input matrix in numpy ndy format
     #[clap(short, long)]
-    json_input_path: path::PathBuf,
+    input_path: path::PathBuf,
 
-    /// Path to the output distance matrix in json format
+    /// Path to output distance and predecessor matrixes in numpy ndz format
     #[clap(short, long)]
-    dist_output_path: path::PathBuf,
-
-    /// Path to the output predecessor matrix in json format
-    #[clap(short, long)]
-    pred_output_path: path::PathBuf,
+    output_path: path::PathBuf,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
@@ -226,34 +210,22 @@ enum Algorithm {
     FW,
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
-    let json_str: &str = &fs::read_to_string(&args.json_input_path).expect("failed to read file");
-    let table: Table = Table::new(&json_str).expect("failed to parse json");
-    let size = table.rows.len();
+    let mut dist: Array2<f64> = read_npy(args.input_path)?;
 
-    let mut dist = vec![vec![0.0; size]; size];
-    for (i, row) in table.rows.iter().enumerate() {
-        for (j, cell) in row.cells.iter().enumerate() {
-            if *cell != 0.0 {
-                dist[i][j] = *cell;
-            }
-        }
-    }
-
-    let pred;
+    let pred: Array2<i64>;
     if args.algorithm == Algorithm::D {
         pred = dijkstra(&mut dist);
     } else {
         pred = floyd_warshall(&mut dist);
     }
 
-    let dist_output_str = serde_json::to_string(&dist).unwrap();
-    fs::write(&args.dist_output_path, dist_output_str)?;
-
-    let pred_output_str = serde_json::to_string(&pred).unwrap();
-    fs::write(&args.pred_output_path, pred_output_str)?;
+    let mut npz = NpzWriter::new(File::create(args.output_path)?);
+    npz.add_array("dist", &dist)?;
+    npz.add_array("pred", &pred)?;
+    npz.finish()?;
 
     Ok(())
 }
@@ -265,112 +237,112 @@ mod tests {
     #[test]
     fn test_floyd_warshall_scipy() {
         // https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csgraph.shortest_path.html
-        let mut dist = vec![vec![INFINITY; 4]; 4];
-        dist[0][1] = 1.0;
-        dist[0][2] = 2.0;
-        dist[1][3] = 1.0;
-        dist[2][0] = 2.0;
-        dist[2][3] = 3.0;
+        let mut dist = Array2::<f64>::from_elem((4, 4), INFINITY);
+        dist[[0, 1]] = 1.0;
+        dist[[0, 2]] = 2.0;
+        dist[[1, 3]] = 1.0;
+        dist[[2, 0]] = 2.0;
+        dist[[2, 3]] = 3.0;
         println!("dist before {:?}\n", dist);
 
         let pred = floyd_warshall(&mut dist);
         println!("dist after {:?}\n", dist);
         println!("pred after {:?}\n", pred);
 
-        assert_eq!(dist[0][0], 0.0);
-        assert_eq!(dist[0][1], 1.0);
-        assert_eq!(dist[0][2], 2.0);
-        assert_eq!(dist[0][3], 2.0);
+        assert_eq!(dist[[0, 0]], 0.0);
+        assert_eq!(dist[[0, 1]], 1.0);
+        assert_eq!(dist[[0, 2]], 2.0);
+        assert_eq!(dist[[0, 3]], 2.0);
 
-        assert_eq!(dist[1][0], 1.0);
-        assert_eq!(dist[1][1], 0.0);
-        assert_eq!(dist[1][2], 3.0);
-        assert_eq!(dist[1][3], 1.0);
+        assert_eq!(dist[[1, 0]], 1.0);
+        assert_eq!(dist[[1, 1]], 0.0);
+        assert_eq!(dist[[1, 2]], 3.0);
+        assert_eq!(dist[[1, 3]], 1.0);
 
-        assert_eq!(dist[2][0], 2.0);
-        assert_eq!(dist[2][1], 3.0);
-        assert_eq!(dist[2][2], 0.0);
-        assert_eq!(dist[2][3], 3.0);
+        assert_eq!(dist[[2, 0]], 2.0);
+        assert_eq!(dist[[2, 1]], 3.0);
+        assert_eq!(dist[[2, 2]], 0.0);
+        assert_eq!(dist[[2, 3]], 3.0);
 
-        assert_eq!(dist[3][0], 2.0);
-        assert_eq!(dist[3][1], 1.0);
-        assert_eq!(dist[3][2], 3.0);
-        assert_eq!(dist[3][3], 0.0);
+        assert_eq!(dist[[3, 0]], 2.0);
+        assert_eq!(dist[[3, 1]], 1.0);
+        assert_eq!(dist[[3, 2]], 3.0);
+        assert_eq!(dist[[3, 3]], 0.0);
 
-        assert_eq!(pred[0][0], NO_PRED_NODE);
-        assert_eq!(pred[0][1], 0);
-        assert_eq!(pred[0][2], 0);
-        assert_eq!(pred[0][3], 1);
+        assert_eq!(pred[[0, 0]], NO_PRED_NODE);
+        assert_eq!(pred[[0, 1]], 0);
+        assert_eq!(pred[[0, 2]], 0);
+        assert_eq!(pred[[0, 3]], 1);
 
-        assert_eq!(pred[1][0], 1);
-        assert_eq!(pred[1][1], NO_PRED_NODE);
-        assert_eq!(pred[1][2], 0);
-        assert_eq!(pred[1][3], 1);
+        assert_eq!(pred[[1, 0]], 1);
+        assert_eq!(pred[[1, 1]], NO_PRED_NODE);
+        assert_eq!(pred[[1, 2]], 0);
+        assert_eq!(pred[[1, 3]], 1);
 
-        assert_eq!(pred[2][0], 2);
-        assert_eq!(pred[2][1], 0);
-        assert_eq!(pred[2][2], NO_PRED_NODE);
-        assert_eq!(pred[2][3], 2);
+        assert_eq!(pred[[2, 0]], 2);
+        assert_eq!(pred[[2, 1]], 0);
+        assert_eq!(pred[[2, 2]], NO_PRED_NODE);
+        assert_eq!(pred[[2, 3]], 2);
 
-        assert_eq!(pred[3][0], 1);
-        assert_eq!(pred[3][1], 3);
-        assert_eq!(pred[3][2], 3);
-        assert_eq!(pred[3][3], NO_PRED_NODE);
+        assert_eq!(pred[[3, 0]], 1);
+        assert_eq!(pred[[3, 1]], 3);
+        assert_eq!(pred[[3, 2]], 3);
+        assert_eq!(pred[[3, 3]], NO_PRED_NODE);
     }
 
     #[test]
     fn test_dijkstra_scipy() {
         // https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csgraph.shortest_path.html
-        let mut dist = vec![vec![INFINITY; 4]; 4];
-        dist[0][1] = 1.0;
-        dist[0][2] = 2.0;
-        dist[1][3] = 1.0;
-        dist[2][0] = 2.0;
-        dist[2][3] = 3.0;
+        let mut dist = Array2::<f64>::from_elem((4, 4), INFINITY);
+        dist[[0, 1]] = 1.0;
+        dist[[0, 2]] = 2.0;
+        dist[[1, 3]] = 1.0;
+        dist[[2, 0]] = 2.0;
+        dist[[2, 3]] = 3.0;
         println!("dist before {:?}\n", dist);
 
         let pred = dijkstra(&mut dist);
         println!("dist after {:?}\n", dist);
         println!("pred after {:?}\n", pred);
 
-        assert_eq!(dist[0][0], 0.0);
-        assert_eq!(dist[0][1], 1.0);
-        assert_eq!(dist[0][2], 2.0);
-        assert_eq!(dist[0][3], 2.0);
+        assert_eq!(dist[[0, 0]], 0.0);
+        assert_eq!(dist[[0, 1]], 1.0);
+        assert_eq!(dist[[0, 2]], 2.0);
+        assert_eq!(dist[[0, 3]], 2.0);
 
-        assert_eq!(dist[1][0], 1.0);
-        assert_eq!(dist[1][1], 0.0);
-        assert_eq!(dist[1][2], 3.0);
-        assert_eq!(dist[1][3], 1.0);
+        assert_eq!(dist[[1, 0]], 1.0);
+        assert_eq!(dist[[1, 1]], 0.0);
+        assert_eq!(dist[[1, 2]], 3.0);
+        assert_eq!(dist[[1, 3]], 1.0);
 
-        assert_eq!(dist[2][0], 2.0);
-        assert_eq!(dist[2][1], 3.0);
-        assert_eq!(dist[2][2], 0.0);
-        assert_eq!(dist[2][3], 3.0);
+        assert_eq!(dist[[2, 0]], 2.0);
+        assert_eq!(dist[[2, 1]], 3.0);
+        assert_eq!(dist[[2, 2]], 0.0);
+        assert_eq!(dist[[2, 3]], 3.0);
 
-        assert_eq!(dist[3][0], 2.0);
-        assert_eq!(dist[3][1], 1.0);
-        assert_eq!(dist[3][2], 3.0);
-        assert_eq!(dist[3][3], 0.0);
+        assert_eq!(dist[[3, 0]], 2.0);
+        assert_eq!(dist[[3, 1]], 1.0);
+        assert_eq!(dist[[3, 2]], 3.0);
+        assert_eq!(dist[[3, 3]], 0.0);
 
-        assert_eq!(pred[0][0], NO_PRED_NODE);
-        assert_eq!(pred[0][1], 0);
-        assert_eq!(pred[0][2], 0);
-        assert_eq!(pred[0][3], 1);
+        assert_eq!(pred[[0, 0]], NO_PRED_NODE);
+        assert_eq!(pred[[0, 1]], 0);
+        assert_eq!(pred[[0, 2]], 0);
+        assert_eq!(pred[[0, 3]], 1);
 
-        assert_eq!(pred[1][0], 1);
-        assert_eq!(pred[1][1], NO_PRED_NODE);
-        assert_eq!(pred[1][2], 0);
-        assert_eq!(pred[1][3], 1);
+        assert_eq!(pred[[1, 0]], 1);
+        assert_eq!(pred[[1, 1]], NO_PRED_NODE);
+        assert_eq!(pred[[1, 2]], 0);
+        assert_eq!(pred[[1, 3]], 1);
 
-        assert_eq!(pred[2][0], 2);
-        assert_eq!(pred[2][1], 0);
-        assert_eq!(pred[2][2], NO_PRED_NODE);
-        assert_eq!(pred[2][3], 2);
+        assert_eq!(pred[[2, 0]], 2);
+        assert_eq!(pred[[2, 1]], 0);
+        assert_eq!(pred[[2, 2]], NO_PRED_NODE);
+        assert_eq!(pred[[2, 3]], 2);
 
-        assert_eq!(pred[3][0], 1);
-        assert_eq!(pred[3][1], 3);
-        assert_eq!(pred[3][2], 3);
-        assert_eq!(pred[3][3], NO_PRED_NODE);
+        assert_eq!(pred[[3, 0]], 1);
+        assert_eq!(pred[[3, 1]], 3);
+        assert_eq!(pred[[3, 2]], 3);
+        assert_eq!(pred[[3, 3]], NO_PRED_NODE);
     }
 }

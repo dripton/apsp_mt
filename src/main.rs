@@ -14,9 +14,6 @@ extern crate ndarray;
 use ndarray::prelude::*;
 use ndarray_npy::{read_npy, NpzWriter};
 
-extern crate rand;
-use rand::prelude::*;
-
 const NO_PRED_NODE: i64 = -9999;
 const INFINITY: f64 = f64::MAX;
 
@@ -303,6 +300,9 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    extern crate rand;
+    use rand::prelude::*;
 
     fn setup_scipy_test() -> Array2<f64> {
         // https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csgraph.shortest_path.html

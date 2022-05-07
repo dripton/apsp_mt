@@ -302,10 +302,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    // TODO Factor out duplication in these tests
-
-    #[test]
-    fn test_floyd_warshall_scipy() {
+    fn setup_scipy_test() -> Array2<f64> {
         // https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csgraph.shortest_path.html
         let mut dist = Array2::<f64>::from_elem((4, 4), INFINITY);
         dist[[0, 1]] = 1.0;
@@ -314,8 +311,10 @@ mod tests {
         dist[[2, 0]] = 2.0;
         dist[[2, 3]] = 3.0;
         println!("dist before {:?}\n", dist);
+        return dist;
+    }
 
-        let pred = floyd_warshall(&mut dist);
+    fn compare_scipy_test(dist: Array2<f64>, pred: Array2<i64>) {
         println!("dist after {:?}\n", dist);
         println!("pred after {:?}\n", pred);
 
@@ -358,117 +357,26 @@ mod tests {
         assert_eq!(pred[[3, 1]], 3);
         assert_eq!(pred[[3, 2]], 3);
         assert_eq!(pred[[3, 3]], NO_PRED_NODE);
+    }
+
+    #[test]
+    fn test_floyd_warshall_scipy() {
+        let mut dist = setup_scipy_test();
+        let pred = floyd_warshall(&mut dist);
+        compare_scipy_test(dist, pred);
     }
 
     #[test]
     fn test_dijkstra_scipy() {
-        // https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csgraph.shortest_path.html
-        let mut dist = Array2::<f64>::from_elem((4, 4), INFINITY);
-        dist[[0, 1]] = 1.0;
-        dist[[0, 2]] = 2.0;
-        dist[[1, 3]] = 1.0;
-        dist[[2, 0]] = 2.0;
-        dist[[2, 3]] = 3.0;
-        println!("dist before {:?}\n", dist);
-
+        let mut dist = setup_scipy_test();
         let pred = dijkstra(&mut dist);
-        println!("dist after {:?}\n", dist);
-        println!("pred after {:?}\n", pred);
-
-        assert_eq!(dist[[0, 0]], 0.0);
-        assert_eq!(dist[[0, 1]], 1.0);
-        assert_eq!(dist[[0, 2]], 2.0);
-        assert_eq!(dist[[0, 3]], 2.0);
-
-        assert_eq!(dist[[1, 0]], 1.0);
-        assert_eq!(dist[[1, 1]], 0.0);
-        assert_eq!(dist[[1, 2]], 3.0);
-        assert_eq!(dist[[1, 3]], 1.0);
-
-        assert_eq!(dist[[2, 0]], 2.0);
-        assert_eq!(dist[[2, 1]], 3.0);
-        assert_eq!(dist[[2, 2]], 0.0);
-        assert_eq!(dist[[2, 3]], 3.0);
-
-        assert_eq!(dist[[3, 0]], 2.0);
-        assert_eq!(dist[[3, 1]], 1.0);
-        assert_eq!(dist[[3, 2]], 3.0);
-        assert_eq!(dist[[3, 3]], 0.0);
-
-        assert_eq!(pred[[0, 0]], NO_PRED_NODE);
-        assert_eq!(pred[[0, 1]], 0);
-        assert_eq!(pred[[0, 2]], 0);
-        assert_eq!(pred[[0, 3]], 1);
-
-        assert_eq!(pred[[1, 0]], 1);
-        assert_eq!(pred[[1, 1]], NO_PRED_NODE);
-        assert_eq!(pred[[1, 2]], 0);
-        assert_eq!(pred[[1, 3]], 1);
-
-        assert_eq!(pred[[2, 0]], 2);
-        assert_eq!(pred[[2, 1]], 0);
-        assert_eq!(pred[[2, 2]], NO_PRED_NODE);
-        assert_eq!(pred[[2, 3]], 2);
-
-        assert_eq!(pred[[3, 0]], 1);
-        assert_eq!(pred[[3, 1]], 3);
-        assert_eq!(pred[[3, 2]], 3);
-        assert_eq!(pred[[3, 3]], NO_PRED_NODE);
+        compare_scipy_test(dist, pred);
     }
 
     #[test]
     fn test_dial_scipy() {
-        // https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csgraph.shortest_path.html
-        let mut dist = Array2::<f64>::from_elem((4, 4), INFINITY);
-        dist[[0, 1]] = 1.0;
-        dist[[0, 2]] = 2.0;
-        dist[[1, 3]] = 1.0;
-        dist[[2, 0]] = 2.0;
-        dist[[2, 3]] = 3.0;
-        println!("dist before {:?}\n", dist);
-
+        let mut dist = setup_scipy_test();
         let pred = dial(&mut dist);
-        println!("dist after {:?}\n", dist);
-        println!("pred after {:?}\n", pred);
-
-        assert_eq!(dist[[0, 0]], 0.0);
-        assert_eq!(dist[[0, 1]], 1.0);
-        assert_eq!(dist[[0, 2]], 2.0);
-        assert_eq!(dist[[0, 3]], 2.0);
-
-        assert_eq!(dist[[1, 0]], 1.0);
-        assert_eq!(dist[[1, 1]], 0.0);
-        assert_eq!(dist[[1, 2]], 3.0);
-        assert_eq!(dist[[1, 3]], 1.0);
-
-        assert_eq!(dist[[2, 0]], 2.0);
-        assert_eq!(dist[[2, 1]], 3.0);
-        assert_eq!(dist[[2, 2]], 0.0);
-        assert_eq!(dist[[2, 3]], 3.0);
-
-        assert_eq!(dist[[3, 0]], 2.0);
-        assert_eq!(dist[[3, 1]], 1.0);
-        assert_eq!(dist[[3, 2]], 3.0);
-        assert_eq!(dist[[3, 3]], 0.0);
-
-        assert_eq!(pred[[0, 0]], NO_PRED_NODE);
-        assert_eq!(pred[[0, 1]], 0);
-        assert_eq!(pred[[0, 2]], 0);
-        assert_eq!(pred[[0, 3]], 1);
-
-        assert_eq!(pred[[1, 0]], 1);
-        assert_eq!(pred[[1, 1]], NO_PRED_NODE);
-        assert_eq!(pred[[1, 2]], 0);
-        assert_eq!(pred[[1, 3]], 1);
-
-        assert_eq!(pred[[2, 0]], 2);
-        assert_eq!(pred[[2, 1]], 0);
-        assert_eq!(pred[[2, 2]], NO_PRED_NODE);
-        assert_eq!(pred[[2, 3]], 2);
-
-        assert_eq!(pred[[3, 0]], 1);
-        assert_eq!(pred[[3, 1]], 3);
-        assert_eq!(pred[[3, 2]], 3);
-        assert_eq!(pred[[3, 3]], NO_PRED_NODE);
+        compare_scipy_test(dist, pred);
     }
 }

@@ -389,8 +389,8 @@ mod tests {
         let max_cost = 4;
         let mut dist = Array2::<f64>::from_elem((vertexes, vertexes), INFINITY);
         for _ in 0..edges {
-            let i = rng.gen_range(0..edges);
-            let j = rng.gen_range(0..edges);
+            let i = rng.gen_range(0..vertexes);
+            let j = rng.gen_range(0..vertexes);
             let cost = rng.gen_range(1..=max_cost);
             dist[[i, j]] = cost as f64;
         }

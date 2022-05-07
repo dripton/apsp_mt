@@ -12,8 +12,10 @@ use bucket_queue::*;
 
 extern crate ndarray;
 use ndarray::prelude::*;
-
 use ndarray_npy::{read_npy, NpzWriter};
+
+extern crate rand;
+use rand::prelude::*;
 
 const NO_PRED_NODE: i64 = -9999;
 const INFINITY: f64 = f64::MAX;
@@ -378,5 +380,35 @@ mod tests {
         let mut dist = setup_scipy_test();
         let pred = dial(&mut dist);
         compare_scipy_test(dist, pred);
+    }
+
+    fn setup_random_matrix() -> Array2<f64> {
+        let mut rng = thread_rng();
+        let vertexes = 100;
+        let edges = 100;
+        let max_cost = 4;
+        let mut dist = Array2::<f64>::from_elem((vertexes, vertexes), INFINITY);
+        for _ in 0..edges {
+            let i = rng.gen_range(0..edges);
+            let j = rng.gen_range(0..edges);
+            let cost = rng.gen_range(1..=max_cost);
+            dist[[i, j]] = cost as f64;
+        }
+        return dist;
+    }
+
+    #[test]
+    fn multi_algorithm_random_matrix() {
+        let mut dist1 = setup_random_matrix();
+        let mut dist2 = dist1.clone();
+        let mut dist3 = dist2.clone();
+
+        floyd_warshall(&mut dist1);
+        dijkstra(&mut dist2);
+        dial(&mut dist3);
+
+        assert_eq!(dist1, dist2);
+        assert_eq!(dist1, dist3);
+        // predecessors are not guaranteed to be identical
     }
 }

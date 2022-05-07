@@ -12,3 +12,4 @@ rayon = "1.0"
 clap = { version = "3.1.15", features = ["derive"] }
 ndarray = { version = "0.15.4", features = ["serde", "rayon"] }
 ndarray-npy = "0.8.1"
+rand = "0.8.5"

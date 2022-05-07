@@ -19,6 +19,7 @@ name = "apsp_mt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bucket_queue",
  "clap",
  "ndarray",
  "ndarray-npy",
@@ -68,6 +69,12 @@ checksum = "fa79dedbb091f449f1f39e53edf88d5dbe95f895dae6135a8d7b881fb5af73f5"
 dependencies = [
  "byte-tools",
 ]
+
+[[package]]
+name = "bucket_queue"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "899ef58ed41750685cdd9900e2a49e66477835f639ca6798650a6e13e62b5463"
 
 [[package]]
 name = "byte-tools"

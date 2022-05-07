@@ -1,11 +1,14 @@
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::path;
 
 use anyhow::Result;
 use clap::{ArgEnum, Parser};
 use rayon::prelude::*;
+
+extern crate bucket_queue;
+use bucket_queue::*;
 
 extern crate ndarray;
 use ndarray::prelude::*;
@@ -14,6 +17,13 @@ use ndarray_npy::{read_npy, NpzWriter};
 
 const NO_PRED_NODE: i64 = -9999;
 const INFINITY: f64 = f64::MAX;
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
+enum Algorithm {
+    D,
+    FW,
+    Dial,
+}
 
 // TODO multi-thread
 fn floyd_warshall(dist: &mut Array2<f64>) -> Array2<i64> {
@@ -109,7 +119,47 @@ fn dijkstra_one_row(
     return (dist_row, pred_row);
 }
 
-fn dijkstra(dist: &mut Array2<f64>) -> Array2<i64> {
+fn dial_one_row(
+    start: u64,
+    size: usize,
+    neighbors_map: &HashMap<u64, HashSet<u64>>,
+    weights: &HashMap<(u64, u64), u64>,
+) -> (Vec<f64>, Vec<i64>) {
+    let mut dist_row = vec![INFINITY; size];
+    let mut pred_row = vec![NO_PRED_NODE; size];
+
+    let mut queue = BucketQueue::<VecDeque<u64>>::new();
+
+    dist_row[start as usize] = 0.0;
+    queue.enqueue(start, 0);
+
+    while !queue.is_empty() {
+        if let Some(priority) = queue.min_priority() {
+            if let Some(u) = queue.dequeue_min() {
+                if priority == dist_row[u as usize] as usize {
+                    if let Some(neighbors) = neighbors_map.get(&u) {
+                        for v in neighbors {
+                            if let Some(weight) = weights.get(&(u, *v)) {
+                                let alt = dist_row[u as usize] as u64 + weight;
+                                if alt < (dist_row[*v as usize]) as u64 {
+                                    dist_row[*v as usize] = alt as f64;
+                                    pred_row[*v as usize] = u as i64;
+                                    queue.enqueue(*v as u64, alt as usize);
+                                }
+                            } else {
+                                panic!("bug: neighbor not in weights");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return (dist_row, pred_row);
+}
+
+fn dijkstra_dial_inner(dist: &mut Array2<f64>, alg: Algorithm) -> Array2<i64> {
     let size = dist.nrows();
     let mut pred = Array2::<i64>::from_elem((size, size), NO_PRED_NODE);
 
@@ -173,11 +223,21 @@ fn dijkstra(dist: &mut Array2<f64>) -> Array2<i64> {
         }
     }
 
-    // Do the Dijkstra algorithm for each row, in parallel using Rayon
-    let tuples: Vec<(Vec<f64>, Vec<i64>)> = (0..size)
-        .into_par_iter()
-        .map(|i| dijkstra_one_row(i as u64, size, &neighbors_map, &weights))
-        .collect();
+    let tuples: Vec<(Vec<f64>, Vec<i64>)>;
+    // Do the Dijkstra or algorithm for each row, in parallel using Rayon
+    if alg == Algorithm::D {
+        tuples = (0..size)
+            .into_par_iter()
+            .map(|i| dijkstra_one_row(i as u64, size, &neighbors_map, &weights))
+            .collect();
+    } else if alg == Algorithm::Dial {
+        tuples = (0..size)
+            .into_par_iter()
+            .map(|i| dial_one_row(i as u64, size, &neighbors_map, &weights))
+            .collect();
+    } else {
+        panic!("broken Algorithm");
+    }
     for (i, (dist_row, pred_row)) in tuples.iter().enumerate() {
         // TODO Find a way to copy the entire row
         for (j, dist_el) in dist_row.iter().enumerate() {
@@ -189,6 +249,14 @@ fn dijkstra(dist: &mut Array2<f64>) -> Array2<i64> {
     }
 
     return pred;
+}
+
+fn dijkstra(dist: &mut Array2<f64>) -> Array2<i64> {
+    return dijkstra_dial_inner(dist, Algorithm::D);
+}
+
+fn dial(dist: &mut Array2<f64>) -> Array2<i64> {
+    return dijkstra_dial_inner(dist, Algorithm::Dial);
 }
 
 #[derive(Parser)]
@@ -206,12 +274,6 @@ struct Args {
     output_path: path::PathBuf,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
-enum Algorithm {
-    D,
-    FW,
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -220,8 +282,12 @@ fn main() -> Result<()> {
     let pred: Array2<i64>;
     if args.algorithm == Algorithm::D {
         pred = dijkstra(&mut dist);
-    } else {
+    } else if args.algorithm == Algorithm::Dial {
+        pred = dial(&mut dist);
+    } else if args.algorithm == Algorithm::FW {
         pred = floyd_warshall(&mut dist);
+    } else {
+        panic!("bad algorithm");
     }
 
     let mut npz = NpzWriter::new(File::create(args.output_path)?);
@@ -235,6 +301,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TODO Factor out duplication in these tests
 
     #[test]
     fn test_floyd_warshall_scipy() {
@@ -304,6 +372,62 @@ mod tests {
         println!("dist before {:?}\n", dist);
 
         let pred = dijkstra(&mut dist);
+        println!("dist after {:?}\n", dist);
+        println!("pred after {:?}\n", pred);
+
+        assert_eq!(dist[[0, 0]], 0.0);
+        assert_eq!(dist[[0, 1]], 1.0);
+        assert_eq!(dist[[0, 2]], 2.0);
+        assert_eq!(dist[[0, 3]], 2.0);
+
+        assert_eq!(dist[[1, 0]], 1.0);
+        assert_eq!(dist[[1, 1]], 0.0);
+        assert_eq!(dist[[1, 2]], 3.0);
+        assert_eq!(dist[[1, 3]], 1.0);
+
+        assert_eq!(dist[[2, 0]], 2.0);
+        assert_eq!(dist[[2, 1]], 3.0);
+        assert_eq!(dist[[2, 2]], 0.0);
+        assert_eq!(dist[[2, 3]], 3.0);
+
+        assert_eq!(dist[[3, 0]], 2.0);
+        assert_eq!(dist[[3, 1]], 1.0);
+        assert_eq!(dist[[3, 2]], 3.0);
+        assert_eq!(dist[[3, 3]], 0.0);
+
+        assert_eq!(pred[[0, 0]], NO_PRED_NODE);
+        assert_eq!(pred[[0, 1]], 0);
+        assert_eq!(pred[[0, 2]], 0);
+        assert_eq!(pred[[0, 3]], 1);
+
+        assert_eq!(pred[[1, 0]], 1);
+        assert_eq!(pred[[1, 1]], NO_PRED_NODE);
+        assert_eq!(pred[[1, 2]], 0);
+        assert_eq!(pred[[1, 3]], 1);
+
+        assert_eq!(pred[[2, 0]], 2);
+        assert_eq!(pred[[2, 1]], 0);
+        assert_eq!(pred[[2, 2]], NO_PRED_NODE);
+        assert_eq!(pred[[2, 3]], 2);
+
+        assert_eq!(pred[[3, 0]], 1);
+        assert_eq!(pred[[3, 1]], 3);
+        assert_eq!(pred[[3, 2]], 3);
+        assert_eq!(pred[[3, 3]], NO_PRED_NODE);
+    }
+
+    #[test]
+    fn test_dial_scipy() {
+        // https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csgraph.shortest_path.html
+        let mut dist = Array2::<f64>::from_elem((4, 4), INFINITY);
+        dist[[0, 1]] = 1.0;
+        dist[[0, 2]] = 2.0;
+        dist[[1, 3]] = 1.0;
+        dist[[2, 0]] = 2.0;
+        dist[[2, 3]] = 3.0;
+        println!("dist before {:?}\n", dist);
+
+        let pred = dial(&mut dist);
         println!("dist after {:?}\n", dist);
         println!("pred after {:?}\n", pred);
 
